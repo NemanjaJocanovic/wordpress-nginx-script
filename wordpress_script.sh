@@ -18,6 +18,13 @@ else
     echo "tar is already installed"
 fi
 
+if ! command -v curl &> /dev/null; then
+    echo "curl not found, installing..."
+    sudo apt install curl -y
+else
+    echo "curl is already installed"
+fi
+
 #Install Nginx
 sudo apt install nginx -y
 sudo systemctl enable nginx
@@ -29,7 +36,9 @@ sudo apt install mysql-server -y
 sudo apt install php8.1-fpm php-mysql -y
 
 # Get the IP address of the instance
-IP=$(curl -s http://checkip.amazonaws.com)
+IP=$(curl -s http://checkip.amazonaws.com) 
+#This may be problematic if the curl command fails, the whole script will fail.
+#In a real use-case this script would have a domain name and this step would be avoided.
 
 #Configuring Nginx to use PHP Processor
 sudo mkdir /var/www/$IP
@@ -93,9 +102,6 @@ sudo mysql -e "CREATE USER '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASSWORD';"
 sudo mysql -e "GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';"
 sudo mysql -e "FLUSH PRIVILEGES;"
 
-# Get the IP address of the instance
-IP=$(curl -s http://checkip.amazonaws.com)
-
 #Download latest WordPress package
 wget https://wordpress.org/latest.tar.gz
 
@@ -116,6 +122,29 @@ sudo sed -i "s/database_name_here/$DB_NAME/g" /var/www/$IP/wp-config.php
 sudo sed -i "s/username_here/$DB_USER/g" /var/www/$IP/wp-config.php
 sudo sed -i "s/password_here/$DB_PASSWORD/g" /var/www/$IP/wp-config.php
 
+# Define the path to your wp-config.php file
+config_path="/var/www/$IP/wp-config.php"
+
+# Remove existing salts from wp-config.php
+sudo sed -i "/define( *'AUTH_KEY'/d" $config_path
+sudo sed -i "/define( *'SECURE_AUTH_KEY'/d" $config_path
+sudo sed -i "/define( *'LOGGED_IN_KEY'/d" $config_path
+sudo sed -i "/define( *'NONCE_KEY'/d" $config_path
+sudo sed -i "/define( *'AUTH_SALT'/d" $config_path
+sudo sed -i "/define( *'SECURE_AUTH_SALT'/d" $config_path
+sudo sed -i "/define( *'LOGGED_IN_SALT'/d" $config_path
+sudo sed -i "/define( *'NONCE_SALT'/d" $config_path
+
+# Fetch new salts and save them to a text file
+curl https://api.wordpress.org/secret-key/1.1/salt/ > new_salts.txt
+
+# Insert new salts into wp-config.php
+sudo sed -i "51r new_salts.txt" $config_path
+
+# Remove the new_salts.txt file
+rm new_salts.txt
+
+
 # Download wp-cli
 curl -O https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
 
@@ -126,8 +155,18 @@ sudo mv wp-cli.phar /usr/local/bin/wp
 # Get user input for WordPress installation details
 read -p "Enter the website title: " WP_TITLE
 read -p "Enter the WordPress admin username: " WP_ADMIN_USER
-read -p "Enter the WordPress admin email: " WP_ADMIN_EMAIL
 read -sp "Enter the WordPress admin password: " WP_ADMIN_PASSWORD
+
+#Validating email from user input
+valid_email_regex="^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+read -p "Enter the WordPress admin email: " WP_ADMIN_EMAIL
+
+while ! [[ "$WP_ADMIN_EMAIL" =~ $valid_email_regex ]]; do
+  echo "Invalid email address entered: $WP_ADMIN_EMAIL"
+  read -p "Enter a valid email address: " WP_ADMIN_EMAIL
+done
+
+echo "Valid email address entered: $WP_ADMIN_EMAIL"
 echo ""
 
 # Install WordPress using wp-cli
