@@ -106,4 +106,30 @@ tar -zxf latest.tar.gz
 sudo cp -r wordpress/* /var/www/$IP
 
 #Setting ownership of the WordPress files
-sudo chown -R www-data:www-data /var/www/$IP
+sudo chown -R www-data:www-data /var/www/$IP    
+
+#Create a WordPress configuration file
+sudo cp /var/www/$IP/wp-config-sample.php /var/www/$IP/wp-config.php
+
+#Update the WordPress configuration file
+sudo sed -i "s/database_name_here/$DB_NAME/g" /var/www/$IP/wp-config.php
+sudo sed -i "s/username_here/$DB_USER/g" /var/www/$IP/wp-config.php
+sudo sed -i "s/password_here/$DB_PASSWORD/g" /var/www/$IP/wp-config.php
+
+# Download wp-cli
+curl -O https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+
+# Make wp-cli executable
+sudo chmod +x wp-cli.phar
+sudo mv wp-cli.phar /usr/local/bin/wp
+
+# Get user input for WordPress installation details
+read -p "Enter the website title: " WP_TITLE
+read -p "Enter the WordPress admin username: " WP_ADMIN_USER
+read -p "Enter the WordPress admin email: " WP_ADMIN_EMAIL
+read -sp "Enter the WordPress admin password: " WP_ADMIN_PASSWORD
+echo ""
+
+# Install WordPress using wp-cli
+cd /var/www/$IP
+sudo -u www-data wp core install --url="http://$IP" --title="$WP_TITLE" --admin_user="$WP_ADMIN_USER" --admin_email="$WP_ADMIN_EMAIL" --admin_password="$WP_ADMIN_PASSWORD"
