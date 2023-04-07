@@ -1,35 +1,41 @@
 #!/bin/bash
 
+valid_email() {
+  local email
+  local valid_email_regex="^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+  
+  read -p "Your email address: " email
+  while ! [[ "$email" =~ $valid_email_regex ]]; do
+    echo >&2 "Invalid email address entered: $email"
+    read -p "Please enter a valid email address: " email
+  done
+  echo "$email"
+}
+
 # Update the System
 sudo apt update && sudo apt upgrade -y
 
-# Install dependencies
-if ! command -v wget &> /dev/null; then
-    echo "wget not found, installing..."
-    sudo apt install wget -y
-else
-    echo "wget is already installed"
-fi
+# List of dependencies
+dependencies=("wget" "tar" "curl" "sendmail" "ufw")
 
-if ! command -v tar &> /dev/null; then
-    echo "tar not found, installing..."
-    sudo apt install tar -y
-else
-    echo "tar is already installed"
-fi
-
-if ! command -v curl &> /dev/null; then
-    echo "curl not found, installing..."
-    sudo apt install curl -y
-else
-    echo "curl is already installed"
-fi
-
-# Installing sendmail, because it is required by WordPress and PHP
-sudo apt install sendmail -y
+# Loop through the dependencies
+for dep in "${dependencies[@]}"; do
+    if ! command -v $dep &> /dev/null; then
+        echo "$dep not found, installing..."
+        sudo apt install $dep -y
+    else
+        echo "$dep is already installed"
+    fi
+done
 
 # Install Nginx
 sudo apt install nginx -y
+
+# Install UFW and allow Nginx traffic
+sudo ufw allow 'Nginx Full'
+echo "y" | sudo ufw enable
+
+# Enable Nginx
 sudo systemctl enable nginx
 
 # Install MySQL
@@ -105,18 +111,13 @@ sudo systemctl restart nginx
 # Install Certbot and its Nginx plugin
 sudo apt install certbot python3-certbot-nginx -y
 
-# Input for the email address
-read -p "Enter your email address: " EMAIL_CERTBOT
-
-# Validating the email address
-valid_email_regex="^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-while ! [[ "$EMAIL_CERTBOT" =~ $valid_email_regex ]]; do
-  echo "Invalid email address entered: $EMAIL_CERTBOT"
-  read -p "Enter a valid email address: " EMAIL_CERTBOT
-done
+# Certbot email address
+echo "Please enter your email address for Certbot"
+EMAIL_CERTBOT=$(valid_email)
 
 # Request an SSL certificate
-sudo certbot --nginx --agree-tos --redirect --non-interactive --email $EMAIL_CERTBOT -d $DOMAIN
+sudo certbot --nginx --agree-tos --redirect --non-interactive --email $EMAIL_CERTBOT -d $DOMAIN 
+# Use the --test-cert flag to test the certificate, because of the limit of 5 certificates per week
 
 # Restart Nginx
 sudo systemctl restart nginx
@@ -194,17 +195,16 @@ read -p "Enter the WordPress admin username: " WP_ADMIN_USER
 read -sp "Enter the WordPress admin password: " WP_ADMIN_PASSWORD
 echo ""
 
-# Validating email from user input
-read -p "Enter the WordPress admin email: " WP_ADMIN_EMAIL
-
-while ! [[ "$WP_ADMIN_EMAIL" =~ $valid_email_regex ]]; do
-  echo "Invalid email address entered: $WP_ADMIN_EMAIL"
-  read -p "Enter a valid email address: " WP_ADMIN_EMAIL
-done
-
-echo "Valid email address entered: $WP_ADMIN_EMAIL"
-echo ""
+# Get user input for WordPress admin email address
+echo "Please enter the WordPress admin email address"
+WP_ADMIN_EMAIL=$(valid_email)
 
 # Install WordPress using wp-cli
+current_dir=$(pwd)
 cd /var/www/$DOMAIN
 sudo -u www-data wp core install --url="http://$DOMAIN" --title="$WP_TITLE" --admin_user="$WP_ADMIN_USER" --admin_email="$WP_ADMIN_EMAIL" --admin_password="$WP_ADMIN_PASSWORD"
+
+# Remove files
+cd $current_dir
+rm latest.tar.gz
+rm -rf wordpress
