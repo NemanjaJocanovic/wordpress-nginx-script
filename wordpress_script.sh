@@ -16,7 +16,7 @@ valid_email() {
 sudo apt update && sudo apt upgrade -y
 
 # List of dependencies
-dependencies=("wget" "tar" "curl" "sendmail" "ufw")
+dependencies=("wget" "tar" "curl" "sendmail" "ufw" "needrestart")
 
 # Loop through the dependencies
 for dep in "${dependencies[@]}"; do
@@ -27,6 +27,9 @@ for dep in "${dependencies[@]}"; do
         echo "$dep is already installed"
     fi
 done
+
+# Setting needrestart to automatically restart services
+sudo sed -i 's/#$nrconf{restart} = '"'"'i'"'"';/$nrconf{restart} = '"'"'a'"'"';/g' /etc/needrestart/needrestart.conf
 
 # Install Nginx
 sudo apt install nginx -y
@@ -41,12 +44,16 @@ sudo systemctl enable nginx
 # Install MySQL
 sudo apt install mysql-server -y
 
+# Adding Ondrej's PPA
+sudo add-apt-repository ppa:ondrej/php -y
+sudo apt update
+
 # Install PHP
-sudo apt install php8.1-fpm php-mysql -y
+sudo apt install php8.2-fpm php-mysql -y
 
 # Start and enable PHP-FPM
-sudo systemctl start php8.1-fpm
-sudo systemctl enable php8.1-fpm
+sudo systemctl start php8.2-fpm
+sudo systemctl enable php8.2-fpm
 
 # Validating the domain name
 valid_domain_regex="^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z]{2,})+$"
@@ -86,7 +93,7 @@ server {
 
     location ~ \.php$ {
         include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
+        fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;
      }
 
     location ~ /\.ht {
@@ -116,17 +123,66 @@ echo "Please enter your email address for Certbot"
 EMAIL_CERTBOT=$(valid_email)
 
 # Request an SSL certificate
-sudo certbot --nginx --agree-tos --redirect --non-interactive --email $EMAIL_CERTBOT -d $DOMAIN 
+sudo certbot --nginx --agree-tos --redirect --non-interactive --email $EMAIL_CERTBOT -d $DOMAIN --test-cert
 # Use the --test-cert flag to test the certificate, because of the limit of 5 certificates per week
 
-# Restart Nginx
+# Restart and test Nginx 
+sudo nginx -t
 sudo systemctl restart nginx
 
 # Cron job to renew the SSL certificate
 echo "0 3 * * * root certbot renew --quiet --deploy-hook 'systemctl reload nginx'" | sudo tee -a /etc/crontab > /dev/null
 
 # Installing PHP extensions for WordPress
-sudo apt install php8.1-common php8.1-mysql php8.1-xml php8.1-xmlrpc php8.1-curl php8.1-gd php8.1-imagick php8.1-cli php8.1-dev php8.1-imap php8.1-mbstring php8.1-opcache php8.1-soap php8.1-zip php8.1-intl -y
+sudo apt install php8.2-common php8.2-xml php8.2-xmlrpc php8.2-curl php8.2-gd php8.2-imagick php8.2-dev php8.2-mbstring php8.2-soap php8.2-zip php8.2-intl -y
+
+# Install Fail2Ban
+sudo apt install fail2ban -y
+
+# Create a jail configuration file for WordPress
+sudo touch /etc/fail2ban/jail.d/wordpress.conf
+
+# Create fail2ban filter for WordPress authentication failures
+sudo bash -c "cat > /etc/fail2ban/filter.d/wordpress.conf << EOL
+[Definition]
+failregex = ^<HOST> .* \"POST /wp-login.php
+ignoreregex =
+EOL"
+
+# Configure the jail for authentication failures
+cat <<EOF | sudo tee /etc/fail2ban/jail.d/wordpress.conf
+[wordpress]
+enabled = true
+filter = wordpress
+logpath = /var/log/nginx/$DOMAIN-access.log
+maxretry = 5
+findtime = 3600
+bantime = 3600
+action = iptables-multiport[name=WordpressFail, port="http,https", protocol=tcp]
+EOF
+
+# Create fail2ban filter for Nginx excessive request rates
+sudo bash -c "cat > /etc/fail2ban/filter.d/nginx-req-limit.conf << EOL
+[Definition]
+failregex = limiting requests, excess:.* by zone.*client: <HOST>
+ignoreregex =
+EOL"
+
+# Create and configure fail2ban jail file for excessive request rates
+sudo bash -c "cat > /etc/fail2ban/jail.local << EOL
+[nginx-req-limit]
+enabled  = true
+filter   = nginx-req-limit
+action   = iptables-multiport[name=ReqLimit, port=\"http,https\", protocol=tcp]
+logpath  = /var/log/nginx/*error.log
+findtime = 600
+bantime  = 7200
+maxretry = 10
+EOL"
+
+# Restart and Enable Fail2Ban
+sudo systemctl restart fail2ban
+sudo systemctl enable fail2ban
 
 # User Input for the database 
 read -p "Enter a name for the MySQL database: " DB_NAME
