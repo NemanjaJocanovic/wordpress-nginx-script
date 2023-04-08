@@ -1,30 +1,69 @@
 #!/bin/bash
 
+# Log file
+LOG_FILE="/var/log/wordpress_script.log"
+
+# Create log file and set permissions
+touch "${LOG_FILE}"
+chmod 600 "${LOG_FILE}"
+
+# Function for logging
+logging() {
+    local log_level="$1"
+    local message="$2"
+    logger -p "user.${log_level}" -t "my_script" "${message}"
+    echo "[$(date +"%Y-%m-%d %H:%M:%S")] ${log_level^^} - ${message}" >> "${LOG_FILE}"
+}
+
+# Function to validate email address
 valid_email() {
   local email
   local valid_email_regex="^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
   
   read -p "Your email address: " email
   while ! [[ "$email" =~ $valid_email_regex ]]; do
-    echo >&2 "Invalid email address entered: $email"
+    logging "error" "Invalid email address entered: $email"
     read -p "Please enter a valid email address: " email
   done
   echo "$email"
 }
 
-# Update the System
-sudo apt update && sudo apt upgrade -y
+# Function for error handling
+run_command() {
+    local command="$*"
+    logging "info" "Running command: ${command}"
+    if ! eval "$command"; then
+        logging "error" "Failed to execute command: ${command}"
+        exit 1
+    else
+        logging "info" "Command executed successfully: ${command}"
+    fi
+}
+
+# Check if script is being run as root
+if [[ $EUID -ne 0 ]]; then
+   logging "error" "This script must be run as root"
+   exit 1
+fi
+
+# Create the log file and set permissions
+touch "${LOG_FILE}"
+chmod 600 "${LOG_FILE}"
+
+# Update and upgrade the System
+run_command sudo apt update
+run_command sudo apt upgrade -y
 
 # List of dependencies
-dependencies=("wget" "tar" "curl" "sendmail" "ufw" "needrestart")
+dependencies=("wget" "tar" "curl" "sendmail" "ufw" "needrestart" "logger")
 
 # Loop through the dependencies
 for dep in "${dependencies[@]}"; do
     if ! command -v $dep &> /dev/null; then
-        echo "$dep not found, installing..."
+        logging "info" "$dep not found, installing..."
         sudo apt install $dep -y
     else
-        echo "$dep is already installed"
+        logging "info" "$dep is already installed"
     fi
 done
 
@@ -32,28 +71,32 @@ done
 sudo sed -i 's/#$nrconf{restart} = '"'"'i'"'"';/$nrconf{restart} = '"'"'a'"'"';/g' /etc/needrestart/needrestart.conf
 
 # Install Nginx
-sudo apt install nginx -y
+run_command sudo apt install nginx -y
 
-# Install UFW and allow Nginx traffic
+# Allow Nginx traffic
 sudo ufw allow 'Nginx Full'
 echo "y" | sudo ufw enable
 
 # Enable Nginx
-sudo systemctl enable nginx
+run_command sudo systemctl enable nginx
 
 # Install MySQL
-sudo apt install mysql-server -y
+run_command sudo apt install mysql-server -y
+
+# Start and enable MySQL
+run_command sudo systemctl start mysql
+run_command sudo systemctl enable mysql
 
 # Adding Ondrej's PPA
-sudo add-apt-repository ppa:ondrej/php -y
-sudo apt update
+run_command sudo add-apt-repository ppa:ondrej/php -y
+run_command sudo apt update
 
 # Install PHP
-sudo apt install php8.2-fpm php-mysql -y
+run_command sudo apt install php8.2-fpm php-mysql -y
 
 # Start and enable PHP-FPM
-sudo systemctl start php8.2-fpm
-sudo systemctl enable php8.2-fpm
+run_command sudo systemctl start php8.2-fpm
+run_command sudo systemctl enable php8.2-fpm
 
 # Validating the domain name
 valid_domain_regex="^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z]{2,})+$"
@@ -61,19 +104,19 @@ valid_domain_regex="^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z]{2,})
 read -p "Enter a domain name: " DOMAIN
 
 while ! [[ "$DOMAIN" =~ $valid_domain_regex ]]; do
-  echo "Invalid domain name entered: $DOMAIN"
+  logging "error" "Invalid domain name entered: $DOMAIN"
   read -p "Enter a valid domain name: " DOMAIN
 done
 
-echo "The domain name '$DOMAIN' is valid."
+logging "info" "The domain name '$DOMAIN' is valid."
 
 
 # Configuring Nginx to use PHP Processor
-sudo mkdir /var/www/$DOMAIN
-sudo chown -R $USER:$USER /var/www/$DOMAIN
+run_command sudo mkdir /var/www/$DOMAIN
+run_command sudo chown -R $USER:$USER /var/www/$DOMAIN
 
 # Create a new Nginx configuration file
-sudo touch /etc/nginx/sites-available/$DOMAIN.conf
+run_command sudo touch /etc/nginx/sites-available/$DOMAIN.conf
 
 # Nginx configuration file
 cat <<EOF | sudo tee /etc/nginx/sites-available/$DOMAIN.conf
@@ -104,40 +147,41 @@ server {
 EOF
 
 # Enable Nginx configuration
-sudo ln -s /etc/nginx/sites-available/$DOMAIN.conf /etc/nginx/sites-enabled/
+run_command sudo ln -s /etc/nginx/sites-available/$DOMAIN.conf /etc/nginx/sites-enabled/
 
 # Disable default Nginx configuration
-sudo unlink /etc/nginx/sites-enabled/default
+run_command sudo unlink /etc/nginx/sites-enabled/default
 
 # Test Nginx configuration
-sudo nginx -t
+run_command sudo nginx -t
 
 # Restart Nginx
-sudo systemctl restart nginx
+run_command sudo systemctl restart nginx
 
 # Install Certbot and its Nginx plugin
-sudo apt install certbot python3-certbot-nginx -y
+run_command sudo apt install certbot python3-certbot-nginx -y
 
 # Certbot email address
 echo "Please enter your email address for Certbot"
 EMAIL_CERTBOT=$(valid_email)
+logging "info" "The email address '$EMAIL_CERTBOT' is valid."
 
 # Request an SSL certificate
-sudo certbot --nginx --agree-tos --redirect --non-interactive --email $EMAIL_CERTBOT -d $DOMAIN --test-cert
+run_command sudo certbot --nginx --agree-tos --redirect --non-interactive --email "$EMAIL_CERTBOT" -d $DOMAIN --test-cert
 # Use the --test-cert flag to test the certificate, because of the limit of 5 certificates per week
 
 # Restart and test Nginx 
-sudo nginx -t
-sudo systemctl restart nginx
+run_command sudo nginx -t
+run_command sudo systemctl restart nginx
 
 # Cron job to renew the SSL certificate
 echo "0 3 * * * root certbot renew --quiet --deploy-hook 'systemctl reload nginx'" | sudo tee -a /etc/crontab > /dev/null
 
 # Installing PHP extensions for WordPress
-sudo apt install php8.2-common php8.2-xml php8.2-xmlrpc php8.2-curl php8.2-gd php8.2-imagick php8.2-dev php8.2-mbstring php8.2-soap php8.2-zip php8.2-intl -y
+run_command sudo apt install php8.2-common php8.2-xml php8.2-xmlrpc php8.2-curl php8.2-gd php8.2-imagick php8.2-dev php8.2-mbstring php8.2-soap php8.2-zip php8.2-intl -y
 
 # Install Fail2Ban
-sudo apt install fail2ban -y
+run_command sudo apt install fail2ban -y
 
 # Create a jail configuration file for WordPress
 sudo touch /etc/fail2ban/jail.d/wordpress.conf
@@ -181,8 +225,8 @@ maxretry = 10
 EOL"
 
 # Restart and Enable Fail2Ban
-sudo systemctl restart fail2ban
-sudo systemctl enable fail2ban
+run_command sudo systemctl restart fail2ban
+run_command sudo systemctl enable fail2ban
 
 # User Input for the database 
 read -p "Enter a name for the MySQL database: " DB_NAME
@@ -197,19 +241,19 @@ sudo mysql -e "GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';"
 sudo mysql -e "FLUSH PRIVILEGES;"
 
 # Download latest WordPress package
-wget https://wordpress.org/latest.tar.gz
+run_command wget https://wordpress.org/latest.tar.gz
 
 # Extract the WordPress package
-tar -zxf latest.tar.gz
+run_command tar -zxf latest.tar.gz
 
 # Copy WordPress files to the web root
-sudo cp -r wordpress/* /var/www/$DOMAIN
+run_command sudo cp -r wordpress/* /var/www/$DOMAIN
 
 # Setting ownership of the WordPress files
-sudo chown -R www-data:www-data /var/www/$DOMAIN    
+run_command sudo chown -R www-data:www-data /var/www/$DOMAIN    
 
 # Create a WordPress configuration file
-sudo cp /var/www/$DOMAIN/wp-config-sample.php /var/www/$DOMAIN/wp-config.php
+run_command sudo cp /var/www/$DOMAIN/wp-config-sample.php /var/www/$DOMAIN/wp-config.php
 
 # Update the WordPress configuration file
 sudo sed -i "s/database_name_here/$DB_NAME/g" /var/www/$DOMAIN/wp-config.php
@@ -239,11 +283,11 @@ sudo sed -i "51r new_salts.txt" $config_path
 rm new_salts.txt
 
 # Download wp-cli
-curl -O https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+run_command curl -O https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
 
 # Make wp-cli executable
-sudo chmod +x wp-cli.phar
-sudo mv wp-cli.phar /usr/local/bin/wp
+run_command sudo chmod +x wp-cli.phar
+run_command sudo mv wp-cli.phar /usr/local/bin/wp
 
 # Get user input for WordPress installation details
 read -p "Enter the website title: " WP_TITLE
@@ -258,7 +302,7 @@ WP_ADMIN_EMAIL=$(valid_email)
 # Install WordPress using wp-cli
 current_dir=$(pwd)
 cd /var/www/$DOMAIN
-sudo -u www-data wp core install --url="http://$DOMAIN" --title="$WP_TITLE" --admin_user="$WP_ADMIN_USER" --admin_email="$WP_ADMIN_EMAIL" --admin_password="$WP_ADMIN_PASSWORD"
+run_command sudo -u www-data wp core install --url="http://$DOMAIN" --title="$WP_TITLE" --admin_user="$WP_ADMIN_USER" --admin_email="$WP_ADMIN_EMAIL" --admin_password="$WP_ADMIN_PASSWORD"
 
 # Remove files
 cd $current_dir
