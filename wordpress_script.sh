@@ -52,7 +52,6 @@ chmod 600 "${LOG_FILE}"
 
 # Update and upgrade the System
 run_command sudo apt update
-run_command sudo apt upgrade -y
 
 # List of dependencies
 dependencies=("wget" "tar" "curl" "sendmail" "ufw" "needrestart" "logger")
@@ -69,6 +68,9 @@ done
 
 # Setting needrestart to automatically restart services
 sudo sed -i 's/#$nrconf{restart} = '"'"'i'"'"';/$nrconf{restart} = '"'"'a'"'"';/g' /etc/needrestart/needrestart.conf
+
+# Upgrade the System
+run_command sudo apt upgrade -y
 
 # Install Nginx
 run_command sudo apt install nginx -y
@@ -167,7 +169,7 @@ EMAIL_CERTBOT=$(valid_email)
 logging "info" "The email address '$EMAIL_CERTBOT' is valid."
 
 # Request an SSL certificate
-run_command sudo certbot --nginx --agree-tos --redirect --non-interactive --email "$EMAIL_CERTBOT" -d $DOMAIN --test-cert
+run_command sudo certbot --nginx --agree-tos --redirect --non-interactive --email "$EMAIL_CERTBOT" -d $DOMAIN
 # Use the --test-cert flag to test the certificate, because of the limit of 5 certificates per week
 
 # Restart and test Nginx 
