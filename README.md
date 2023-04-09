@@ -6,7 +6,7 @@ It takes care of installing and configuring Nginx, MySQL, PHP, Certbot, Fail2Ban
 Prerequisits:
 * Before you begin, ensure that you have a valid domain name pointing to your server's IP address.
 * After you boot up your Ubuntu server I recommend you run once `sudo apt update && sudo apt upgrade -y` and reboot your server with `sudo reboot now`. 
-You can have some outdated kernel pop-ups during installation if you don't do this. they won't interrupt the installation, but will be annoying.
+You can have some outdated kernel pop-ups during installation if you don't do this. They won't interrupt the installation, but will be annoying.
 
 Instructions:
 
@@ -37,7 +37,6 @@ You should see your new WordPress site with the title you provided during the in
 7. Log in to the WordPress admin dashboard:
 Navigate to https://yourdomain.com/wp-admin and enter the WordPress admin username and password you provided during the installation process. 
 You can now manage your WordPress site from the admin dashboard.
-
 
 By following these instructions, you have successfully installed and configured a WordPress site on your server using the provided script. 
 If there is an error, it will be logged to `/var/log/wordpress_script.log`, and you will see the error message on the screen.
